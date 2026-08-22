@@ -54,7 +54,6 @@ customer_support_agent/
 - **Role-Based Admin Interception**: Allows human supervisors to issue an authorized HTTP POST (secured with a signed JWT bearer token) to append instructions directly to the graph state and update the active user's canvas.
 - **Human-in-the-Loop Approval Gate**: Refund actions freeze the graph (`interrupt_before`) until an admin explicitly signs off via the takeover endpoint; approval is single-use and cannot be replayed against later requests in the same thread.
 
-> **Note on "Hybrid BM25 + Chroma" search**: the original README and `requirements.txt` advertised hybrid BM25 + dense-vector search (`rank-bm25`, `flashrank`). No code in the notebook actually implemented BM25 retrieval anywhere — only Chroma dense vector search is wired into `live_rag_validation_node`. This README has been corrected to describe what the code actually does. If hybrid search is wanted, it would need to be implemented (e.g. `langchain`'s `EnsembleRetriever` combining a `BM25Retriever` over the same corpus with the existing Chroma retriever) — that work is out of scope for this review pass.
 
 ## 🚀 Step-by-Step Operations Runbook
 
