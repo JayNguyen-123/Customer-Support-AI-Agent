@@ -2,8 +2,6 @@
 
 An enterprise-grade, production-ready AI customer support platform built on top of LangGraph, FastAPI, SQLAlchemy, and OpenTelemetry. This system features adaptive multi-agent intent routing, automated RAG guardrails backed by Chroma DB, real-time async WebSocket token streaming, a secure role-based JWT administrative takeover API, and an end-to-end telemetry observability stack (Prometheus + Jaeger + Grafana).
 
-> **This README documents the project as reassembled and repaired from the original notebook.** See [What Was Reviewed and Fixed](#-what-was-reviewed-and-fixed) at the bottom for the full list of bugs found and changes made — several of them are load-bearing (the app could not start or would silently misbehave without them).
-
 ## 📂 Project Directory Structure
 
 ```
@@ -170,57 +168,3 @@ The manager's statement injects directly into the active user's chat stream, and
 
 ---
 
-## 🛠 What Was Reviewed and Fixed
-
-This project was supplied as a Jupyter notebook (`Customer_Support_Agent_AI.ipynb`) where each file's content lived in its own code cell. Reassembling it into a real project tree and reading it file-by-file surfaced a number of issues, ranging from "the app cannot start" to a real security bug. Everything below was fixed directly in this delivered copy.
-
-**Missing files (the project could not run at all as originally notebook'd):**
-
-- `database_persistence.py` was imported by `alembic/env.py`, `main.py`, and `tests/test_security.py`, but did not exist anywhere in the notebook — there was an orphaned empty markdown header where its cell should have been. Rewritten from scratch to match both Alembic migrations exactly (`UserModel` with `username`, `email`, `hashed_password`, `role`, `is_active`, `created_at`), plus the `engine`/`SessionLocal`/`get_db()` scaffolding the rest of the app expects.
-- `entrypoint.sh` was referenced by the `Dockerfile` (`chmod +x entrypoint.sh`, `ENTRYPOINT ["./entrypoint.sh"]`) but never included — the Docker build would fail at the `chmod` step. Added: runs `alembic upgrade head` then execs Uvicorn. Deliberately does not auto-run `ingest.py` on every boot (see idempotency note below).
-- `prometheus.yml` was mounted by `docker-compose.yml` but never included — the `prometheus` container would fail to start with no config to read. Added scrape config targeting `support-agent:8000`, alerting to `alertmanager:9093`, and `rule_files: [alerts.yml]`.
-
-**Missing functionality:**
-
-- `main.py` had no `/api/v1/auth/register` or `/api/v1/auth/login` endpoints and no JWT-issuing function, even though the README's own runbook told operators to `curl` a login endpoint that didn't exist, and `tests/test_security.py` expected to authenticate. Added `RegisterRequestSchema`/`LoginRequestSchema`/`TokenResponseSchema`, `generate_access_token()`, and the two endpoints (password hashing via `passlib`, `is_active` check on login).
-
-**Security bug — refund approval never expired:**
-
-`order_management_agent` set `action_requires_approval = True` to freeze a thread pending admin sign-off on a refund, and the takeover endpoint set `approval_granted = True` to unfreeze it — but nothing ever reset `approval_granted` back to `False`. Once any admin approved *any* refund on a thread, every subsequent refund request on that same thread would sail through the approval gate unchecked, permanently. Fixed by resetting `approval_granted` to `False` immediately after it's consumed, and — because a naive "reset after every pass through this node" fix would re-freeze the graph on the tool's own success message (which also contains the word "refund") — the freeze check is now additionally gated on the triggering message actually being a fresh `HumanMessage`, not a `ToolMessage` or an admin-injected message. Traced the full `order_agent → order_tools → order_agent` loop by hand to confirm the fix doesn't introduce that regression.
-
-**Test suite was not actually testing anything:**
-
-`tests/test_agent.py` mocks `ChatOpenAI.ainvoke` / `with_structured_output(...).ainvoke`, but the four LLM-calling node functions (`supervisor_router_node`, `order_management_agent`, `troubleshooting_agent`, `live_rag_validation_node`) called the synchronous `.invoke()`. The async mocks would never intercept a sync call — tests would either silently no-op or hit the real OpenAI API. Converted all four nodes to `async def` using `await ...ainvoke(...)`.
-
-**Telemetry was fully disconnected:**
-
-- `telemetry.py` built its OpenTelemetry `Resource` with `Resource.attributes = {...}` — this mutates the `Resource` *class* itself as a side effect and binds the local `resource` variable to a plain `dict`, which then breaks `TracerProvider(resource=resource)`. Fixed with the correct `Resource.create({...})`.
-- Even if that worked, `main.py` never imported `telemetry` at all — it only did `from opentelemetry import trace`, so the custom `TracerProvider`, OTLP exporter, and latency-alerting `SpanProcessor` set up in `telemetry.py`'s import-time init never activated. Every `tracer.start_as_current_span(...)` call in the app was a silent no-op. Added `import telemetry` to `main.py`.
-
-**RAG guardrail didn't actually enforce its own TTL:**
-
-`live_rag_validation_node` computed and stored an `expires_at` timestamp on every ingested chunk (see `ingest.py`) but never passed a filter to `vector_store.similarity_search(...)`, so expired/stale manual content could still be retrieved and cited. Added `filter={"expires_at": {"$gte": current_epoch}}` to the search call.
-
-**Wrong checkpointer, and instantiated outside an event loop:**
-
-`from langgraph_checkpoint_sqlite import SqliteSaver` imports a module name that doesn't exist on PyPI (compare with the correctly-named `from langgraph.checkpoint.memory import MemorySaver` already used in `tests/test_agent.py`). Separately, the graph is invoked exclusively through async methods (`.ainvoke`, `.astream_events`, `.aupdate_state`), so a *sync* checkpointer was the wrong choice regardless. Switched to `from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver`, and — because that class is an async context manager that needs a running event loop to enter — moved graph compilation out of module level and into a FastAPI `lifespan()` context manager that runs at app startup. This also required updating `tests/test_security.py`'s client fixture to enter `TestClient(app)` as a context manager (`with TestClient(app) as client: yield client`) so lifespan actually runs before the takeover tests execute.
-
-**Other hardening:**
-
-- `TokenBucketLimiter` grew one bucket per distinct user/IP forever with no eviction, an unbounded-memory-growth path under real traffic. Added a `stale_after_sec` threshold and a periodic sweep of inactive buckets.
-- `ingest.py`'s `Chroma.from_documents(...)` *appends* to the persisted collection rather than replacing it, so re-running ingestion after editing a manual piled up duplicate, increasingly-stale embeddings alongside the new ones. Added a clear-before-ingest step so re-ingestion is idempotent.
-- `docker-compose.yml` used `network_mode: "host"` on every service — Linux-only, silently broken on Docker Desktop for Mac/Windows, and removes Docker's inter-container network isolation. Replaced with a standard bridge network (`support-net`); services now address each other by name (`jaeger:4317`, `support-agent:8000`, etc.) and the compose file behaves identically on any platform.
-- `requirements.txt` pinned `langgraph` and `fastapi` but not the SQLite checkpointer package or a `bcrypt` version compatible with the pinned `passlib==1.7.4` (passlib 1.7.4 + bcrypt ≥ 4.1 raises an `AttributeError` at import time due to a well-known compatibility break). Added `langgraph-checkpoint-sqlite` and pinned `bcrypt==4.0.1`.
-- Fixed a garbled character in the original README's directory tree (`hooked to大Base` → `hooked to SQLAlchemy Base`), and corrected the feature matrix's "Hybrid BM25 + Chroma" claim (see the note above).
-
-**Flagged, not changed** (lower confidence / judgment calls — worth your own review rather than silently altered):
-
-- Whether FastAPI's `BackgroundTasks` dependency injection behaves as intended on a `@app.websocket(...)` route on the exact FastAPI version you deploy — this pattern has version-dependent quirks and is worth a smoke test on your target version.
-- `/metrics` is exposed without authentication. Common and often acceptable behind a private network / reverse proxy, but worth deciding deliberately rather than by default.
-- `telemetry.py`'s auto-init-on-import pattern (tracer/provider setup runs as a side effect of `import telemetry`) works but is a somewhat fragile design to unit-test cleanly. A more testable design would use an explicit FastAPI startup hook instead; preserved the original module's designed behavior here rather than restructuring it further.
-
-**Verification method — please read this before treating this as fully tested:**
-
-Every Python file compiles cleanly (`py_compile`), every YAML file parses (`yaml.safe_load`), the Grafana dashboard JSON parses, and `alembic.ini` parses via `configparser`. The refund-approval fix and the checkpointer/lifespan fix were verified by manually tracing the graph's execution paths rather than by running them.
-
-**This project's test suite (`pytest -v tests/`) was *not* executed in this environment.** Unlike a smaller, previously-reviewed project where a full stub-based test run was built and 36 tests were actually executed and passed, this project's dependency surface (FastAPI, LangGraph with async checkpointing/interrupts, SQLAlchemy, Alembic, ChromaDB, langchain-openai, OpenTelemetry, prometheus-client, passlib) is large enough, and the async/interrupt/checkpoint semantics involved are complex enough, that building faithful stubs for all of it risked giving false confidence rather than real verification — and this sandbox cannot reach PyPI to install the real packages. Please run `pip install -r requirements.txt && pytest -v tests/` in an environment with real network access before deploying this.
