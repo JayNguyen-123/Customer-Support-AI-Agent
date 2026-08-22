@@ -1,0 +1,45 @@
+groups:
+  - name: langgraph_agent_alerts
+    rules:
+      # =====================================================================
+      # 1. SLA Guardrail: Agent Turn Latency Spike
+      # =====================================================================
+      - alert: SupportAgentLatencySpike
+        expr: |
+          rate(support_agent_graph_latency_seconds_sum[1m])
+          /
+          rate(support_agent_graph_latency_seconds_count[1m])
+          > 5
+        for: 1m
+        labels:
+          severity: critical
+          tier: orchestrator
+        annotations:
+          summary: "LangGraph LLM generation latency is degraded"
+          description: "The average processing turnaround time for an agent response turn has exceeded 5 seconds over the last minute (Measured value: {{ $value }}s)."
+
+      # =====================================================================
+      # 2. Security Guardrail: High Abuse Rate Limiting Drops
+      # =====================================================================
+      - alert: ExtremeTrafficRateLimiting
+        expr: increase(support_agent_rate_limit_drops_total[2m]) > 20
+        for: 30s
+        labels:
+          severity: warning
+          tier: security
+        annotations:
+          summary: "Potential API abuse detected by token bucket"
+          description: "The in-memory token bucket middleware has blocked {{ $value }} high-frequency customer messages over the last 2 minutes, protecting backend LLM token budgets."
+
+      # =====================================================================
+      # 3. Connection Guardrail: WebSocket Capacity Exhaustion
+      # =====================================================================
+      - alert: WebSocketConnectionSurge
+        expr: support_agent_active_websockets > 80
+        for: 2m
+        labels:
+          severity: warning
+          tier: infrastructure
+        annotations:
+          summary: "Active concurrent chat capacity nearing saturation"
+          description: "The number of open persistent user web connections has reached {{ $value }}, crossing 80% of our single-container worker thread boundaries."

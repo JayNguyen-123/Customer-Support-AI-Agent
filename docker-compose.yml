@@ -1,0 +1,126 @@
+version: '3.8'
+
+# NOTE ON NETWORKING: the original file used `network_mode: "host"` on every
+# service. That mode is Linux-only (it's silently ignored -- and doesn't
+# work the same way -- on Docker Desktop for Mac/Windows), removes Docker's
+# network isolation between these containers, and relies on every service
+# guessing the *host's* localhost ports rather than addressing each other by
+# name. It's replaced here with a standard user-defined bridge network:
+# services reach each other by service name (`support-agent:8000`,
+# `jaeger:4317`, ...), each service that needs host access publishes an
+# explicit port, and the compose file works the same way on any platform.
+
+networks:
+  support-net:
+    driver: bridge
+
+services:
+  # =====================================================================
+  # 1. FastAPI App & LangGraph Multi-Agent Runtime
+  # =====================================================================
+  support-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: production_support_agent
+    networks:
+      - support-net
+    ports:
+      - "8000:8000"
+    restart: always
+    volumes:
+      # Mount application database files onto local disk storage to persist user data
+      - .:/app
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-SUPER_SECRET_PRODUCTION_SIGNING_PASSPHRASE_HEX_101}
+      - DATABASE_URL=sqlite:///./users.db
+      # Jaeger's OTLP gRPC endpoint, addressed by its compose service name
+      # now that services no longer share the host network namespace.
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4317
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    depends_on:
+      - jaeger
+
+  # =====================================================================
+  # 2. Prometheus Telemetry Scraper & Alerting Engine
+  # =====================================================================
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    container_name: telemetry_prometheus
+    networks:
+      - support-net
+    ports:
+      - "9090:9090"
+    restart: always
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - ./alerts.yml:/etc/prometheus/alerts.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=15d' # Keep historical metrics for 15 days
+    depends_on:
+      - support-agent
+
+  # =====================================================================
+  # 3. Alertmanager Notifications Dispatch Gate
+  # =====================================================================
+  alertmanager:
+    image: prom/alertmanager:v0.25.0
+    container_name: telemetry_alertmanager
+    networks:
+      - support-net
+    ports:
+      - "9093:9093"
+    restart: always
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+    depends_on:
+      - prometheus
+
+  # =====================================================================
+  # 4. Grafana Visual Analytics Dashboard Portal
+  # =====================================================================
+  grafana:
+    image: grafana/grafana:10.0.0
+    container_name: telemetry_grafana
+    networks:
+      - support-net
+    ports:
+      - "3000:3000"
+    restart: always
+    volumes:
+      # Automatically provision and map the LangGraph JSON analytics dashboard layout
+      - ./grafana/provisioning/dashboards/dashboard-provider.yml:/etc/grafana/provisioning/dashboards/dashboard-provider.yml
+      - ./grafana/dashboards/langgraph_dashboard.json:/etc/grafana/dashboards/langgraph_dashboard.json
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+
+  # =====================================================================
+  # 5. Jaeger Distributed Tracing Collector & UI Dashboard Canvas
+  # =====================================================================
+  jaeger:
+    image: jaegertracing/all-in-one:1.47
+    container_name: telemetry_jaeger
+    networks:
+      - support-net
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "4317:4317"    # OTLP gRPC collector
+    restart: always
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true # Turn on OTLP gRPC endpoint listening targets
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "5m"

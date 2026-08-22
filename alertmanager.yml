@@ -1,0 +1,40 @@
+global:
+  # The time to wait before declaring an alert resolved if no updates are received
+  resolve_timeout: 5m
+
+# The root routing tree node layout matrix
+route:
+  # Group incoming alerts by alert name to prevent notification spamming
+  group_by: ['alertname', 'cluster', 'service']
+
+  # How long to wait before sending the initial notification for a new group
+  group_wait: 30s
+
+  # How long to wait before sending a notification about new alerts added to a group
+  group_interval: 2m
+
+  # How long to wait before re-sending a notification that has already been dispatched
+  repeat_interval: 1h
+
+  # Default destination for all incoming alert types
+  receiver: 'slack-notifications'
+
+receivers:
+- name: 'slack-notifications'
+  slack_configs:
+  - api_url: 'https://slack.com' # Replace with your real Slack Incoming Webhook URL
+    channel: '#ops-alerts'
+    send_resolved: true # Automatically send an update message when the issue is resolved
+    username: 'LangGraph Production Monitor'
+    icon_emoji: ':robot_face:'
+
+    # Advanced Block Kit layout to format clear, actionable alert cards in Slack
+    title: '[[{{ .Status | toUpper }}]] {{ .CommonLabels.alertname }}'
+    text: >-
+      {{ range .Alerts }}
+        *Alert:* {{ .Annotations.summary }}
+        *Severity:* `{{ .Labels.severity }}`
+        *Description:* {{ .Annotations.description }}
+        *Started At:* {{ .StartsAt.Format "2006-01-02 15:04:05 UTC" }}
+        {{ if .Labels.ticket_thread_id }}*Impacted Ticket:* `{{ .Labels.ticket_thread_id }}`{{ end }}
+      {{ end }}
