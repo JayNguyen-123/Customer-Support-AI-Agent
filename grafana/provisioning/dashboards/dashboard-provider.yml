@@ -1,1 +1,14 @@
+apiVersion: 1
 
+providers:
+  # A unique identifier name for the dashboard provider engine
+  - name: 'LangGraph Production Telemetry Provider'
+    orgId: 1
+    folder: 'AI Orchestrator Analytics'
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 10 # Scans the JSON target folder for dashboard edits every 10s
+    options:
+      # The explicit internal directory path where Grafana loads json configurations
+      path: /etc/grafana/dashboards/langgraph_dashboard.json
