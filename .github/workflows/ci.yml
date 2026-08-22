@@ -1,1 +1,52 @@
+name: Continuous Integration Pipeline
 
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  test-and-validate:
+    name: Build, Migrate, and Test
+    runs-on: ubuntu-latest
+
+    # Define environment variables globally for the testing runner sandbox
+    env:
+      JWT_SECRET_KEY: "ci_pipeline_fallback_signing_passphrase_hex_test_key_101"
+      OPENAI_API_KEY: "mock-testing-token-value-to-prevent-initialization-errors"
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+    - name: Checkout Code Repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python Runtime
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip' # Automatically caches dependency wheels to speed up subsequent CI runs
+
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends build-essential
+        rm -rf /var/lib/apt/lists/*
+
+    - name: Install Python Package Requirements
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        pip install pytest pytest-asyncio httpx
+
+    - name: Validate Alembic Database Migrations Baseline
+      run: |
+        echo "Running automated database schema synchronization..."
+        # Validates that your migration scripts are structurally sound and can compile clean tables
+        alembic upgrade head
+
+    - name: Run Async Automation Test Suite
+      run: |
+        echo "Launching test suite via pytest..."
+        # Executes all tests inside the tests/ directory with verbose output logs
+        pytest -v tests/
