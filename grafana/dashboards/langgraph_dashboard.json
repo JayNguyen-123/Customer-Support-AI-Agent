@@ -1,1 +1,188 @@
-
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": 1,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 100,
+      "title": "System Connectivity & Traffic Gauges",
+      "type": "row"
+    },
+    {
+      "title": "Active Chat WebSockets",
+      "type": "gauge",
+      "id": 1,
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "expr": "support_agent_active_websockets",
+          "refId": "A",
+          "legendFormat": "Active Connections"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "cleanups": [],
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 60 },
+              { "color": "red", "value": 85 }
+            ]
+          },
+          "unit": "none"
+        }
+      },
+      "options": {
+        "textMode": "value",
+        "colorMode": "value",
+        "graphMode": "area",
+        "orientation": "auto"
+      }
+    },
+    {
+      "title": "Rate Limit Drop Trends",
+      "type": "timeseries",
+      "id": 2,
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 1 },
+      "targets": [
+        {
+          "expr": "rate(support_agent_rate_limit_drops_total[1m])",
+          "refId": "A",
+          "legendFormat": "Drops / Sec"
+        }
+      ],
+      "options": {
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth"
+          },
+          "color": { "mode": "palette-classic" }
+        }
+      }
+    },
+    {
+      "title": "Total Processed Messages (Cumulative)",
+      "type": "timeseries",
+      "id": 3,
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 1 },
+      "targets": [
+        {
+          "expr": "sum(increase(support_agent_graph_latency_seconds_count[5m]))",
+          "refId": "A",
+          "legendFormat": "Messages Processed"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 20
+          }
+        }
+      }
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "id": 200,
+      "title": "LangGraph Execution Latency Profiling (SLAs)",
+      "type": "row"
+    },
+    {
+      "title": "Agent Turn Latency Quantiles",
+      "type": "timeseries",
+      "id": 4,
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(support_agent_graph_latency_seconds_bucket[5m])) by (le))",
+          "refId": "A",
+          "legendFormat": "P99 Latency"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(support_agent_graph_latency_seconds_bucket[5m])) by (le))",
+          "refId": "B",
+          "legendFormat": "P95 Latency"
+        },
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(support_agent_graph_latency_seconds_bucket[5m])) by (le))",
+          "refId": "C",
+          "legendFormat": "P50 Median Latency"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineThickness": 2
+          }
+        }
+      }
+    },
+    {
+      "title": "Average Graph Node Processing Duration",
+      "type": "timeseries",
+      "id": 5,
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "targets": [
+        {
+          "expr": "rate(support_agent_graph_latency_seconds_sum[5m]) / rate(support_agent_graph_latency_seconds_count[5m])",
+          "refId": "A",
+          "legendFormat": "Avg Turn Duration"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 3.5 },
+              { "color": "red", "value": 5.0}
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["langgraph", "production", "fastapi"],
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": ["5s", "10s", "30s", "1m"]
+  },
+  "timezone": "utc",
+  "title": "LangGraph Production Agent Telemetry"
+}
